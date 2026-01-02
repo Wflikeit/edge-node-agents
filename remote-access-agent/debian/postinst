@@ -1,0 +1,58 @@
+#!/bin/sh
+set -e
+
+. /usr/share/debconf/confmodule
+
+case "$1" in
+  configure)
+    echo "[postinst] Creating directories..."
+    mkdir -p /opt/edge-node/bin
+    mkdir -p /etc/edge-node/node/confs
+
+    echo "[postinst] Setting binary permissions..."
+    if [ -f /opt/edge-node/bin/remote-access-agent ]; then
+      chmod 755 /opt/edge-node/bin/remote-access-agent
+      chown root:root /opt/edge-node/bin/remote-access-agent
+    fi
+
+    echo "[postinst] Creating system user and group..."
+    groupadd -f bm-agents --system || true
+
+    if ! id -u remote-access-agent >/dev/null 2>&1; then
+      useradd remote-access-agent --system -g bm-agents -s /sbin/nologin || true
+    fi
+
+    echo "[postinst] Creating default config if missing..."
+    if [ ! -f /etc/edge-node/node/confs/remote-access-agent.yaml ]; then
+      cat >/etc/edge-node/node/confs/remote-access-agent.yaml <<EOF
+GUID: ''
+proxyEndpoint: "http://10.0.2.2:8080"
+raServiceAddr: "10.0.2.2:50051"
+heartbeatInterval: "5s"
+logLevel: "info"
+EOF
+    fi
+
+    echo "[postinst] Injecting device GUID..."
+    if [ -r /sys/class/dmi/id/product_uuid ]; then
+      sed -i "s/^GUID: .*/GUID: '$(cat /sys/class/dmi/id/product_uuid)'/" \
+        /etc/edge-node/node/confs/remote-access-agent.yaml
+    fi
+
+    echo "[postinst] Loading AppArmor profile..."
+    if command -v apparmor_parser >/dev/null 2>&1; then
+      if [ -f /etc/apparmor.d/opt.edge-node.bin.remote-access-agent ]; then
+        apparmor_parser -rK /etc/apparmor.d/opt.edge-node.bin.remote-access-agent || true
+      fi
+    fi
+
+    echo "[postinst] Reloading systemd + enabling service..."
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload || true
+      systemctl enable remote-access-agent.service || true
+      systemctl restart remote-access-agent.service || true
+    fi
+    ;;
+esac
+
+exit 0

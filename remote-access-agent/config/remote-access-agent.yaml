@@ -1,0 +1,26 @@
+debug: true
+#debug: false
+
+grpc:
+  addr: "localhost:50051"
+  insecure: true
+  ca_cert: ""
+  server_name: ""
+  min_connect_to: "3s"
+  backoff_base: "100ms"
+  backoff_max: "3s"
+  keepalive_time: "120s"
+  keepalive_to: "10s"
+  wait_for_ready: true
+
+
+metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
+metricsInterval: 10s
+
+
+accessTokenPath: /etc/intel_edge_node/tokens/remote-access-agent/access_token
+
+proxy:
+  keepalive: "25s"
+  max_retry: -1
+  remotes: [] # np.: ["R:8000:localhost:80","R:5432:localhost:5432"]

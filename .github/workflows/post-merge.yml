@@ -156,6 +156,7 @@ jobs:
       cluster_agent_version: ${{ steps.agent-versions.outputs.cluster_agent }}
       hardware_discovery_agent_version: ${{ steps.agent-versions.outputs.hardware_discovery_agent }}
       node_agent_version: ${{ steps.agent-versions.outputs.node_agent }}
+      remote_access_agent_version: ${{ steps.agent-versions.outputs.remote_access_agent }} #TODO: Check the version of this agent
       platform_manageability_agent_version: ${{ steps.agent-versions.outputs.platform_manageability_agent }}
       platform_observability_agent_version: ${{ steps.agent-versions.outputs.platform_observability_agent }}
       platform_telemetry_agent_version: ${{ steps.agent-versions.outputs.platform_telemetry_agent }}
@@ -262,6 +263,18 @@ jobs:
             echo "Skipping cluster agent version update as no new version created"
           else
             sed -i "s#cluster_agent_version: .*#cluster_agent_version: ${cluster_agent_version}#" edge-node-container/chart/bma_values.yaml
+          fi
+
+      - name: Update remote-access-agent versions in chart
+        shell: bash
+        working-directory: virtual-edge-node
+        env:
+          remote_access_agent_version: ${{ needs.collect-versions.outputs.remote_access_agent_version }}
+        run: |
+          if [[ $(echo "${remote_access_agent_version}" | grep 'dev') ]]; then
+            echo "Skipping remote access agent version update as no new version created"
+          else
+            sed -i "s#remote_access_agent_version: .*#remote_access_agent_version: ${remote_access_agent_version}#" edge-node-container/chart/bma_values.yaml
           fi
 
       - name: Update hardware-discovery-agent versions in chart
