@@ -1,0 +1,24 @@
+[Unit]
+Description=Remote Access Agent
+Documentation=https://github.com/open-edge-platform/edge-node-agents/blob/main/remote-access-agent/README.md
+
+
+[Service]
+ExecStart=/opt/edge-node/bin/remote-access-agent
+User=remote-access-agent
+Group=bm-agents
+
+Environment=PROXY_ENDPOINT=http://10.0.2.2:8080
+Environment=RA_SVC_ADDR=10.0.2.2:50051
+
+StandardOutput=journal
+StandardError=journal
+
+Restart=on-failure
+RestartSec=5
+
+AppArmorProfile=opt.edge-node.bin.remote-access-agent
+
+[Install]
+WantedBy=multi-user.target
+
