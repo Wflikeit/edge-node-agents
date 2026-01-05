@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: (C) 2025 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+
 package main
 
 import (
@@ -13,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	servicev1 "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/remaccessmgr/v1"
+	servicev1 "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 
 	cbackoff "github.com/cenkalti/backoff/v4"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"

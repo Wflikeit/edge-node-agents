@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: (C) 2025 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+
 package proxy
 
 import (
@@ -9,7 +12,7 @@ import (
 	"time"
 
 	chclient "github.com/jpillora/chisel/client"
-	remaccessmgr "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/remaccessmgr/v1"
+	remaccessmgr "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 )
 
 type ChiselClient interface {

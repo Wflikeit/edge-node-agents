@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: (C) 2025 Intel Corporation
+// SPDX-License-Identifier: Apache-2.0
+
 package grpcclient
 
 import (
@@ -6,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	remaccessmgrv1 "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/remaccessmgr/v1"
+	remaccessmgrv1 "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 	"google.golang.org/grpc"
 	gbackoff "google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
@@ -23,7 +26,7 @@ type RAClient interface {
 
 type client struct {
 	conn *grpc.ClientConn
-	stub remaccessmgrv1.RemaccessmgrServiceClient
+	stub remaccessmgrv1.RmtaccessmgrServiceClient
 }
 
 // New establishes a blocking gRPC connection to ResourceAccessManagerService.
@@ -61,7 +64,7 @@ func New(ctx context.Context, addr string, creds credentials.TransportCredential
 
 	return &client{
 		conn: cc,
-		stub: remaccessmgrv1.NewRemaccessmgrServiceClient(cc),
+		stub: remaccessmgrv1.NewRmtaccessmgrServiceClient(cc),
 	}, cleanup, nil
 }
 
