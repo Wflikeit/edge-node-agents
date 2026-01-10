@@ -24,7 +24,8 @@ else
 	include ../common.mk
 endif
 
-.PHONY: all build clean help lint list package test fuzztest tarball
+#.PHONY: all build clean help lint list package test fuzztest tarball
+.PHONY: all build clean help lint list package fuzztest tarball
 
 all: build lint
 #all: build lint test
