@@ -13,29 +13,21 @@ debug: true
 # sudo cat /sys/class/dmi/id/product_uuid
 GUID: '00000000-0000-0000-0000-000000000000'
 
-grpc:
-  addr: "localhost:50051"
-  insecure: true
-  ca_cert: ""
-  server_name: ""
-  min_connect_to: "3s"
-  backoff_base: "100ms"
-  backoff_max: "3s"
-  keepalive_time: "120s"
-  keepalive_to: "10s"
-  wait_for_ready: true
-
+# gRPC service address for Remote Access Manager (through Traefik)
+remoteAccessManager:
+  serviceURL: 'infra.test.edgeorch.intel.com:443'
 
 metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
 metricsInterval: 10s
 statusEndpoint: 'unix:///run/node-agent/node-agent.sock'
-# Connection parameters
-clusterOrchestratorURL: 'localhost:443'
-heartbeat: '10s'
+
 jwt:
   accessTokenPath: /etc/intel_edge_node/tokens/remote-access-agent/access_token
 
+# Proxy configuration for Chisel client connection to Remote Access Proxy
 proxy:
   keepalive: "25s"
   max_retry: -1
-  remotes: [] # np.: ["R:8000:localhost:80","R:5432:localhost:5432"]
+  # Default endpoint for Remote Access Proxy (WebSocket Secure through Traefik)
+  # Used as fallback if spec from gRPC doesn't provide endpoint
+  defaultEndpoint: 'wss://remote-access-proxy-ws.domain:443'
