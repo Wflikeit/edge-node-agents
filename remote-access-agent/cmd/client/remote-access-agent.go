@@ -20,6 +20,7 @@ import (
 	cbackoff "github.com/cenkalti/backoff/v4"
 
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/metrics"
+	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/info"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
@@ -37,7 +38,7 @@ func main() {
 }
 
 func run() error {
-	log.Infof("Starting %s - %s", logger.Component, logger.Version)
+	log.Infof("Starting %s - %s", info.Component, info.Version)
 
 	addr := envOrDefault("RA_SVC_ADDR", "localhost:50051")
 	useInsecure := envOrDefault("GRPC_INSECURE", "false") == "false"
@@ -49,7 +50,7 @@ func run() error {
 	// Initialize metrics
 	metricsEndpoint := envOrDefault("METRICS_ENDPOINT", "unix:///run/platform-observability-agent/platform-observability-agent.sock")
 	metricsInterval := 10 * time.Second // TODO: load from config when config integration is done
-	shutdown, err := metrics.Init(ctx, metricsEndpoint, metricsInterval, logger.Component, logger.Version)
+	shutdown, err := metrics.Init(ctx, metricsEndpoint, metricsInterval, info.Component, info.Version)
 	if err != nil {
 		log.Errorf("Initialization of metrics failed: %v", err)
 	} else {
