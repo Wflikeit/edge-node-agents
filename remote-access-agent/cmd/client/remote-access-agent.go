@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -18,9 +19,11 @@ import (
 	servicev1 "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 
 	cbackoff "github.com/cenkalti/backoff/v4"
+	"github.com/sirupsen/logrus"
 
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/metrics"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/info"
+	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/config"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
@@ -30,7 +33,12 @@ import (
 
 var log = logger.Logger
 
+func init() {
+	flag.String("config", "", "Config file path")
+}
+
 func main() {
+	flag.Parse()
 	if err := run(); err != nil {
 		log.Errorf("❌ fatal error: %v", err)
 		os.Exit(1)
@@ -38,9 +46,18 @@ func main() {
 }
 
 func run() error {
+	configPath := flag.Lookup("config").Value.String()
+	cfg, err := config.New(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Set log level from config
+	setLogLevel(cfg.LogLevel)
+
 	log.Infof("Starting %s - %s", info.Component, info.Version)
 
-	addr := envOrDefault("RA_SVC_ADDR", "localhost:50051")
+	addr := cfg.RemoteAccessManager.ServiceURL
 	useInsecure := envOrDefault("GRPC_INSECURE", "false") == "false"
 
 	// SIGINT/SIGTERM → cancel
@@ -48,9 +65,7 @@ func run() error {
 	defer stop()
 
 	// Initialize metrics
-	metricsEndpoint := envOrDefault("METRICS_ENDPOINT", "unix:///run/platform-observability-agent/platform-observability-agent.sock")
-	metricsInterval := 10 * time.Second // TODO: load from config when config integration is done
-	shutdown, err := metrics.Init(ctx, metricsEndpoint, metricsInterval, info.Component, info.Version)
+	shutdown, err := metrics.Init(ctx, cfg.MetricsEndpoint, cfg.MetricsInterval, info.Component, info.Version)
 	if err != nil {
 		log.Errorf("Initialization of metrics failed: %v", err)
 	} else {
@@ -97,7 +112,7 @@ func run() error {
 	if err := cbackoff.Retry(func() error {
 		gctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		a, err := raCli.GetSpecByUUID(gctx, "123e4567-e89b-12d3-a456-426614174000")
+		a, err := raCli.GetSpecByUUID(gctx, cfg.GUID)
 		if err != nil {
 			return err
 		}
@@ -107,14 +122,17 @@ func run() error {
 		access = a
 		return nil
 	}, cbackoff.WithContext(bo, ctx)); err != nil {
-		return fmt.Errorf("get resource access by uuid=%s: %w", "123e4567-e89b-12d3-a456-426614174000", err)
+		return fmt.Errorf("get resource access by uuid=%s: %w", cfg.GUID, err)
 	}
 	log.Infof("📦 fetched: uuid=%s", access.GetUuid())
 
 	conn := proxy.New(proxy.DefaultFactory)
-	// TODO: Pass proxy config from loaded config file (when config integration is done)
-	// For now, use nil - endpoint should come from spec.GetRemoteAccessProxyEndpoint()
-	_, closeTunnel, err := conn.Start(ctx, access, nil)
+	proxyCfg := &proxy.StartConfig{
+		DefaultEndpoint: cfg.Proxy.DefaultEndpoint,
+		KeepAlive:       cfg.Proxy.Keepalive,
+		MaxRetryCount:   cfg.Proxy.MaxRetry,
+	}
+	_, closeTunnel, err := conn.Start(ctx, access, proxyCfg)
 	if err != nil && !isCtxErr(err) {
 		return err
 	}
@@ -151,4 +169,15 @@ func buildTLSCreds(caPath, serverName string) (credentials.TransportCredentials,
 
 func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func setLogLevel(logLevel string) {
+	switch strings.ToLower(logLevel) {
+	case "debug":
+		log.Logger.SetLevel(logrus.DebugLevel)
+	case "error":
+		log.Logger.SetLevel(logrus.ErrorLevel)
+	default:
+		log.Logger.SetLevel(logrus.InfoLevel)
+	}
 }

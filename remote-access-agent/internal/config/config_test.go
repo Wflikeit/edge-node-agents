@@ -61,7 +61,7 @@ func createConfigFile(t *testing.T, guid, serviceURL, accessTokenPath string, pr
 
 // createMinimalConfigFile creates a minimal valid config file
 func createMinimalConfigFile(t *testing.T) string {
-	return createConfigFile(t, testGUID, testServiceURL, testAccessTokenPath, "")
+	return createConfigFile(t, testGUID, testServiceURL, testAccessTokenPath, testProxyEndpoint)
 }
 
 // Test_New_ValidConfig tests loading a valid configuration file
@@ -128,8 +128,9 @@ func Test_New_CustomDefaults(t *testing.T) {
 			ServiceURL: testServiceURL,
 		},
 		Proxy: config.ProxyConfig{
-			Keepalive: 30 * time.Second,
-			MaxRetry:  10,
+			DefaultEndpoint: testProxyEndpoint,
+			Keepalive:       30 * time.Second,
+			MaxRetry:        10,
 		},
 		JWT: config.JWTConfig{
 			AccessTokenPath: testAccessTokenPath,
@@ -232,7 +233,7 @@ func Test_New_MissingProxyDefaultEndpoint(t *testing.T) {
 
 // Test_New_MissingAccessTokenPath tests that missing access token path returns error
 func Test_New_MissingAccessTokenPath(t *testing.T) {
-	fileName := createConfigFile(t, testGUID, testServiceURL, "", "")
+	fileName := createConfigFile(t, testGUID, testServiceURL, "", testProxyEndpoint)
 	defer os.Remove(fileName)
 
 	cfg, err := config.New(fileName)
@@ -254,6 +255,9 @@ func Test_New_Symlink(t *testing.T) {
 		GUID: testGUID,
 		RemoteAccessManager: config.RemoteAccessManagerConfig{
 			ServiceURL: testServiceURL,
+		},
+		Proxy: config.ProxyConfig{
+			DefaultEndpoint: testProxyEndpoint,
 		},
 		JWT: config.JWTConfig{
 			AccessTokenPath: testAccessTokenPath,
