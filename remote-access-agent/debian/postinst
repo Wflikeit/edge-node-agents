@@ -25,11 +25,20 @@ case "$1" in
     echo "[postinst] Creating default config if missing..."
     if [ ! -f /etc/edge-node/node/confs/remote-access-agent.yaml ]; then
       cat >/etc/edge-node/node/confs/remote-access-agent.yaml <<EOF
-GUID: ''
-proxyEndpoint: "http://10.0.2.2:8080"
-raServiceAddr: "10.0.2.2:50051"
-heartbeatInterval: "5s"
-logLevel: "info"
+version: 'v0.0.1'
+logLevel: 'info'
+GUID: '00000000-0000-0000-0000-000000000000'
+remoteAccessManager:
+  serviceURL: 'infra.test.edgeorch.intel.com:443'
+metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
+metricsInterval: 10s
+statusEndpoint: 'unix:///run/node-agent/node-agent.sock'
+jwt:
+  accessTokenPath: /etc/intel_edge_node/tokens/remote-access-agent/access_token
+proxy:
+  keepalive: "25s"
+  max_retry: -1
+  defaultEndpoint: 'wss://remote-access-proxy-ws.domain:443'
 EOF
     fi
 

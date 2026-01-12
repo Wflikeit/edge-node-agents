@@ -6,11 +6,7 @@ package logger
 
 import (
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/logger"
+	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/info"
 )
 
-const (
-	Component = "Remote Access Agent"
-	Version   = "1.0.0-dev" // TODO: inject version at build time
-)
-
-var Logger = logger.New(Component, Version)
+var Logger = logger.New(info.Component, info.Version)
