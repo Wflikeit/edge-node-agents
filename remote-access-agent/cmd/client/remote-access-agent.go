@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/metrics"
+	"github.com/open-edge-platform/edge-node-agents/common/pkg/status"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/info"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/config"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
@@ -30,6 +32,8 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+const AGENT_NAME = "remote-access-agent"
 
 var log = logger.Logger
 
@@ -138,8 +142,14 @@ func run() error {
 	}
 	defer closeTunnel()
 
+	// Initialize and start status reporting
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go sendHealthStatus(&wg, ctx, cfg.StatusEndpoint)
+
 	<-ctx.Done()
 	log.Info("👋 client shutting down gracefully")
+	wg.Wait()
 	return nil
 }
 
@@ -180,4 +190,67 @@ func setLogLevel(logLevel string) {
 	default:
 		log.Logger.SetLevel(logrus.InfoLevel)
 	}
+}
+
+// sendHealthStatus sends health status (Ready/NotReady) periodically to the status service
+func sendHealthStatus(wg *sync.WaitGroup, ctx context.Context, statusServerEndpoint string) {
+	defer wg.Done()
+
+	statusClient, statusInterval := initStatusClientAndTicker(ctx, statusServerEndpoint)
+	if statusClient == nil {
+		return // Failed to initialize, exit gracefully
+	}
+
+	ticker := time.NewTicker(statusInterval)
+	defer ticker.Stop()
+
+	// Send initial Ready status
+	if err := statusClient.SendStatusReady(ctx, AGENT_NAME); err != nil {
+		log.Errorf("Failed to send initial status Ready: %v", err)
+	} else {
+		log.Debug("Status Ready sent")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Agent is running, so report as Ready
+			if err := statusClient.SendStatusReady(ctx, AGENT_NAME); err != nil {
+				log.Errorf("Failed to send status Ready: %v", err)
+			} else {
+				log.Debug("Status Ready sent")
+			}
+		}
+	}
+}
+
+// initStatusClientAndTicker initializes the status client and retrieves the status interval
+func initStatusClientAndTicker(ctx context.Context, statusServer string) (*status.StatusClient, time.Duration) {
+	statusClient, err := status.InitClient(statusServer)
+	if err != nil {
+		log.Errorf("Failed to initialize status client: %v", err)
+		return nil, 0
+	}
+
+	var interval time.Duration
+	op := func() error {
+		var err error
+		interval, err = statusClient.GetStatusInterval(ctx, AGENT_NAME)
+		if err != nil {
+			log.Errorf("Failed to get status interval: %v", err)
+		}
+		return err
+	}
+
+	// Retry to get status interval (high number of retries as retries would mostly indicate a problem with the status server)
+	bo := cbackoff.NewExponentialBackOff()
+	err = cbackoff.Retry(op, cbackoff.WithContext(cbackoff.WithMaxRetries(bo, 30), ctx))
+	if err != nil {
+		log.Warnf("Failed to get status interval, defaulting to 10 seconds: %v", err)
+		interval = 10 * time.Second
+	}
+
+	return statusClient, interval
 }
