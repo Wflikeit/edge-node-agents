@@ -24,6 +24,7 @@ import (
 
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/metrics"
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/status"
+	"github.com/open-edge-platform/edge-node-agents/common/pkg/utils"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/info"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/config"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
@@ -108,13 +109,17 @@ func run() error {
 		}
 	}()
 
+	// Add JWT auth header (authorization: Bearer ...) to all outgoing gRPC calls,
+	// same pattern as other agents (e.g. platform-telemetry-agent).
+	ctxAuth := utils.GetAuthContext(ctx, cfg.JWT.AccessTokenPath)
+
 	var access *servicev1.AgentRemoteAccessSpec
 	bo := cbackoff.NewExponentialBackOff()
 	bo.InitialInterval = 100 * time.Millisecond
 	bo.MaxInterval = time.Second
 	bo.MaxElapsedTime = 15 * time.Second
 	if err := cbackoff.Retry(func() error {
-		gctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		gctx, cancel := context.WithTimeout(ctxAuth, 2*time.Second)
 		defer cancel()
 		a, err := raCli.GetSpecByUUID(gctx, cfg.GUID)
 		if err != nil {
