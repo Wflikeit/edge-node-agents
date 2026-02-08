@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: (C) 2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+---
+version: 'v0.0.1'
+
+logLevel: 'debug'
+
+debug: true
+#debug: false
+
+# Globally unique identifier read from motherboard. Might be obtained with:
+# sudo cat /sys/class/dmi/id/product_uuid
+GUID: '00000000-0000-0000-0000-000000000000'
+
+# gRPC service address for Remote Access Manager (through Traefik)
+remoteAccessManager:
+  serviceURL: 'infra.test.edgeorch.intel.com:443'
+
+metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
+metricsInterval: 10s
+statusEndpoint: 'unix:///run/node-agent/node-agent.sock'
+
+jwt:
+  accessTokenPath: /etc/intel_edge_node/tokens/remote-access-agent/access_token
+
+# Proxy configuration for Chisel client connection to Remote Access Proxy
+proxy:
+  keepalive: "25s"
+  max_retry: -1
+  # Default endpoint for Remote Access Proxy (WebSocket Secure through Traefik)
+  # Used as fallback if spec from gRPC doesn't provide endpoint
+  defaultEndpoint: 'wss://remote-access-proxy-ws.domain:443'
