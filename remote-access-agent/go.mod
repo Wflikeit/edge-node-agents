@@ -4,6 +4,7 @@ go 1.24.4
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/jpillora/chisel v1.10.0
 	github.com/sirupsen/logrus v1.9.4-0.20230606125235-dd1b4c2e81af
 	github.com/stretchr/testify v1.11.1
@@ -26,7 +27,7 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251111163417-95abcf5c77ba // indirect

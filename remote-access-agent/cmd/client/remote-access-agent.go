@@ -30,11 +30,15 @@ import (
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
+	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tenantjwt"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 const AGENT_NAME = "remote-access-agent"
+
+// How long to wait between successful RAM polls when there is no ACTIVE spec yet.
+const configPollInterval = 30 * time.Second
 
 var log = logger.Logger
 
@@ -61,6 +65,12 @@ func run() error {
 	setLogLevel(cfg.LogLevel)
 
 	log.Infof("Starting %s - %s", info.Component, info.Version)
+
+	tenantID, err := tenantjwt.FromAccessTokenFile(cfg.JWT.AccessTokenPath)
+	if err != nil {
+		return fmt.Errorf("tenantID from JWT (realm_access roles {tenantUUID}_...): %w", err)
+	}
+	log.Infof("RAM tenantID: %s", tenantID)
 
 	addr := cfg.RemoteAccessManager.ServiceURL
 	useInsecure := envOrDefault("GRPC_INSECURE", "false") == "false"
@@ -113,27 +123,9 @@ func run() error {
 	// same pattern as other agents (e.g. platform-telemetry-agent).
 	ctxAuth := utils.GetAuthContext(ctx, cfg.JWT.AccessTokenPath)
 
-	var access *servicev1.AgentRemoteAccessSpec
-	bo := cbackoff.NewExponentialBackOff()
-	bo.InitialInterval = 100 * time.Millisecond
-	bo.MaxInterval = time.Second
-	bo.MaxElapsedTime = 15 * time.Second
-	if err := cbackoff.Retry(func() error {
-		gctx, cancel := context.WithTimeout(ctxAuth, 2*time.Second)
-		defer cancel()
-		a, err := raCli.GetSpecByUUID(gctx, cfg.GUID)
-		if err != nil {
-			return err
-		}
-		if a == nil {
-			return fmt.Errorf("not ready")
-		}
-		access = a
-		return nil
-	}, cbackoff.WithContext(bo, ctx)); err != nil {
-		return fmt.Errorf("get resource access by uuid=%s: %w", cfg.GUID, err)
-	}
-	log.Infof("📦 fetched: uuid=%s", access.GetUuid())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go sendHealthStatus(&wg, ctx, cfg.StatusEndpoint)
 
 	conn := proxy.New(proxy.DefaultFactory)
 	proxyCfg := &proxy.StartConfig{
@@ -141,18 +133,104 @@ func run() error {
 		KeepAlive:       cfg.Proxy.Keepalive,
 		MaxRetryCount:   cfg.Proxy.MaxRetry,
 	}
-	_, closeTunnel, err := conn.Start(ctx, access, proxyCfg)
-	if err != nil && !isCtxErr(err) {
-		return err
+
+	rpcBo := cbackoff.NewExponentialBackOff()
+	rpcBo.InitialInterval = 500 * time.Millisecond
+	rpcBo.MaxInterval = 30 * time.Second
+	rpcBo.MaxElapsedTime = 0
+
+	var closeTunnel func() error
+	defer func() {
+		if closeTunnel != nil {
+			if err := closeTunnel(); err != nil {
+				log.Warnf("⚠️ close tunnel: %v", err)
+			}
+		}
+	}()
+
+pollLoop:
+	for {
+		if ctx.Err() != nil {
+			break pollLoop
+		}
+
+		gctx, cancel := context.WithTimeout(ctxAuth, 8*time.Second)
+		resp, err := raCli.GetRemoteAccessConfig(gctx, cfg.GUID, tenantID)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				break pollLoop
+			}
+			log.Warnf("RAM poll failed: %v", err)
+			if sleepOrDone(ctx, rpcBo.NextBackOff()) != nil {
+				break pollLoop
+			}
+			continue
+		}
+		rpcBo.Reset()
+
+		switch resp.GetStatus() {
+		case servicev1.ConfigStatus_CONFIG_STATUS_ACTIVE:
+			spec := resp.GetSpec()
+			if spec == nil {
+				log.Error("RAM returned ACTIVE with nil spec")
+				if sleepOrDone(ctx, configPollInterval) != nil {
+					break pollLoop
+				}
+				continue
+			}
+			log.Infof("remote access active: rac uuid=%s", spec.GetUuid())
+			_, closeFn, err := conn.Start(ctx, spec, proxyCfg)
+			if err != nil {
+				if isCtxErr(err) || ctx.Err() != nil {
+					break pollLoop
+				}
+				log.Warnf("proxy start failed: %v", err)
+				if sleepOrDone(ctx, configPollInterval) != nil {
+					break pollLoop
+				}
+				continue
+			}
+			closeTunnel = closeFn
+			<-ctx.Done()
+			break pollLoop
+
+		case servicev1.ConfigStatus_CONFIG_STATUS_NONE:
+			log.Debugf("RAM: no remote access configuration for this host yet (NONE)")
+			if sleepOrDone(ctx, configPollInterval) != nil {
+				break pollLoop
+			}
+
+		case servicev1.ConfigStatus_CONFIG_STATUS_PENDING:
+			log.Debugf("RAM: remote access configuration pending")
+			if sleepOrDone(ctx, configPollInterval) != nil {
+				break pollLoop
+			}
+
+		case servicev1.ConfigStatus_CONFIG_STATUS_DISABLED:
+			log.Infof("RAM: remote access disabled for this host")
+			if sleepOrDone(ctx, configPollInterval) != nil {
+				break pollLoop
+			}
+
+		case servicev1.ConfigStatus_CONFIG_STATUS_ERROR:
+			code := ""
+			if ce := resp.GetError(); ce != nil {
+				code = ce.GetCode()
+			}
+			log.Warnf("RAM: configuration error (code=%q)", code)
+			if sleepOrDone(ctx, configPollInterval) != nil {
+				break pollLoop
+			}
+
+		default:
+			log.Warnf("RAM: unexpected status %v", resp.GetStatus())
+			if sleepOrDone(ctx, configPollInterval) != nil {
+				break pollLoop
+			}
+		}
 	}
-	defer closeTunnel()
 
-	// Initialize and start status reporting
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go sendHealthStatus(&wg, ctx, cfg.StatusEndpoint)
-
-	<-ctx.Done()
 	log.Info("👋 client shutting down gracefully")
 	wg.Wait()
 	return nil
@@ -184,6 +262,18 @@ func buildTLSCreds(caPath, serverName string) (credentials.TransportCredentials,
 
 func isCtxErr(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		d = time.Millisecond
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 func setLogLevel(logLevel string) {

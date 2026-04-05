@@ -20,8 +20,9 @@ import (
 // RAClient is the minimal interface used by the edge agent.
 // It only needs to read Remote Access specs from the Manager service.
 type RAClient interface {
-	// GetSpecByUUID fetches the agent's Remote Access configuration by RA UUID.
-	GetSpecByUUID(ctx context.Context, uuid string) (*remaccessmgrv1.AgentRemoteAccessSpec, error)
+	// GetRemoteAccessConfig calls RAM GetRemoteAccessConfigByGuid. On success, err is nil and the
+	// caller must inspect ConfigStatus (NONE/PENDING/ACTIVE/…) — nil spec is valid for NONE/PENDING/DISABLED.
+	GetRemoteAccessConfig(ctx context.Context, hostUUID, tenantID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error)
 }
 
 type client struct {
@@ -68,23 +69,21 @@ func New(ctx context.Context, addr string, creds credentials.TransportCredential
 	}, cleanup, nil
 }
 
-// GetSpecByUUID fetches the agent configuration (spec) for the given Remote Access UUID.
-func (c *client) GetSpecByUUID(ctx context.Context, uuid string) (*remaccessmgrv1.AgentRemoteAccessSpec, error) {
-	if uuid == "" {
-		return nil, errors.New("uuid must not be empty")
+// GetRemoteAccessConfig fetches the full polling response for the host SMBIOS UUID and tenant.
+func (c *client) GetRemoteAccessConfig(ctx context.Context, hostUUID, tenantID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error) {
+	if hostUUID == "" {
+		return nil, errors.New("host uuid must not be empty")
+	}
+	if tenantID == "" {
+		return nil, errors.New("tenantID must not be empty")
 	}
 
-	// Short per-RPC deadline to avoid hanging the agent
 	rpcCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	resp, err := c.stub.GetRemoteAccessConfigByGuid(rpcCtx, &remaccessmgrv1.GetRemoteAccessConfigByGuidRequest{Uuid: uuid})
+	resp, err := c.stub.GetRemoteAccessConfigByGuid(rpcCtx, &remaccessmgrv1.GetRemoteAccessConfigByGuidRequest{Uuid: hostUUID, TenantID: tenantID})
 	if err != nil {
-		return nil, fmt.Errorf("GetAgentSpec RPC failed: %w", err)
+		return nil, fmt.Errorf("GetRemoteAccessConfigByGuid: %w", err)
 	}
-	spec := resp.GetSpec()
-	if spec == nil {
-		return nil, errors.New("GetAgentSpec returned nil spec")
-	}
-	return spec, nil
+	return resp, nil
 }
