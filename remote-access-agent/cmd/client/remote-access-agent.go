@@ -119,10 +119,6 @@ func run() error {
 		}
 	}()
 
-	// Add JWT auth header (authorization: Bearer ...) to all outgoing gRPC calls,
-	// same pattern as other agents (e.g. platform-telemetry-agent).
-	ctxAuth := utils.GetAuthContext(ctx, cfg.JWT.AccessTokenPath)
-
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go sendHealthStatus(&wg, ctx, cfg.StatusEndpoint)
@@ -154,6 +150,8 @@ pollLoop:
 			break pollLoop
 		}
 
+		// Refresh auth context from token file for each poll, so rotated JWTs are picked up.
+		ctxAuth := utils.GetAuthContext(ctx, cfg.JWT.AccessTokenPath)
 		gctx, cancel := context.WithTimeout(ctxAuth, 8*time.Second)
 		resp, err := raCli.GetRemoteAccessConfig(gctx, cfg.GUID, tenantID)
 		cancel()
@@ -168,6 +166,8 @@ pollLoop:
 			continue
 		}
 		rpcBo.Reset()
+
+		log.Infof("RAM poll: status=%s", resp.GetStatus().String())
 
 		switch resp.GetStatus() {
 		case servicev1.ConfigStatus_CONFIG_STATUS_ACTIVE:
