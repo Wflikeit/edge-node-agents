@@ -30,7 +30,6 @@ import (
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/logger"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
-	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tenantjwt"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tunnelmgr"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -69,12 +68,6 @@ func run() error {
 	setLogLevel(cfg.LogLevel)
 
 	log.Infof("Starting %s - %s", info.Component, info.Version)
-
-	tenantID, err := tenantjwt.FromAccessTokenFile(cfg.JWT.AccessTokenPath)
-	if err != nil {
-		return fmt.Errorf("tenantID from JWT (realm_access roles {tenantUUID}_...): %w", err)
-	}
-	log.Infof("RAM tenantID: %s", tenantID)
 
 	addr := cfg.RemoteAccessManager.ServiceURL
 	// Legacy semantics: default (unset or "false") uses insecure gRPC; set GRPC_INSECURE=true to enable TLS (see branch below).
@@ -162,7 +155,7 @@ pollLoop:
 		// Refresh auth context from token file for each poll, so rotated JWTs are picked up.
 		ctxAuth := utils.GetAuthContext(ctx, cfg.JWT.AccessTokenPath)
 		gctx, cancel := context.WithTimeout(ctxAuth, 8*time.Second)
-		resp, err := raCli.GetRemoteAccessConfig(gctx, cfg.GUID, tenantID)
+		resp, err := raCli.GetRemoteAccessConfig(gctx, cfg.GUID)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {

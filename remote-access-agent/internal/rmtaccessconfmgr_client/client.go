@@ -22,7 +22,8 @@ import (
 type RAClient interface {
 	// GetRemoteAccessConfig calls RAM GetRemoteAccessConfigByGuid. On success, err is nil and the
 	// caller must inspect ConfigStatus (NONE/PENDING/ACTIVE/…) — nil spec is valid for NONE/PENDING/DISABLED.
-	GetRemoteAccessConfig(ctx context.Context, hostUUID, tenantID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error)
+	// Tenant is derived server-side from the gRPC metadata Bearer JWT (see utils.GetAuthContext).
+	GetRemoteAccessConfig(ctx context.Context, hostUUID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error)
 }
 
 type client struct {
@@ -69,19 +70,16 @@ func New(ctx context.Context, addr string, creds credentials.TransportCredential
 	}, cleanup, nil
 }
 
-// GetRemoteAccessConfig fetches the full polling response for the host SMBIOS UUID and tenant.
-func (c *client) GetRemoteAccessConfig(ctx context.Context, hostUUID, tenantID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error) {
+// GetRemoteAccessConfig fetches the full polling response for the host SMBIOS UUID.
+func (c *client) GetRemoteAccessConfig(ctx context.Context, hostUUID string) (*remaccessmgrv1.GetResourceAccessConfigResponse, error) {
 	if hostUUID == "" {
 		return nil, errors.New("host uuid must not be empty")
-	}
-	if tenantID == "" {
-		return nil, errors.New("tenantID must not be empty")
 	}
 
 	rpcCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	resp, err := c.stub.GetRemoteAccessConfigByGuid(rpcCtx, &remaccessmgrv1.GetRemoteAccessConfigByGuidRequest{Uuid: hostUUID, TenantID: tenantID})
+	resp, err := c.stub.GetRemoteAccessConfigByGuid(rpcCtx, &remaccessmgrv1.GetRemoteAccessConfigByGuidRequest{Uuid: hostUUID})
 	if err != nil {
 		return nil, fmt.Errorf("GetRemoteAccessConfigByGuid: %w", err)
 	}
