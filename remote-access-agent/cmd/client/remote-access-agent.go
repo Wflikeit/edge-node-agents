@@ -31,14 +31,18 @@ import (
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/proxy"
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tenantjwt"
+	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tunnelmgr"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 const AGENT_NAME = "remote-access-agent"
 
-// How long to wait between successful RAM polls when there is no ACTIVE spec yet.
+// How long to wait between successful RAM polls (tunel otwarty lub nie).
 const configPollInterval = 30 * time.Second
+
+// defaultMaxRAMOutage is Tmax: close tunnel if no successful RAM RPC for this long (override with REMOTE_ACCESS_RAM_MAX_OUTAGE).
+const defaultMaxRAMOutage = 1 * time.Hour
 
 var log = logger.Logger
 
@@ -49,7 +53,7 @@ func init() {
 func main() {
 	flag.Parse()
 	if err := run(); err != nil {
-		log.Errorf("❌ fatal error: %v", err)
+		log.Errorf("fatal error: %v", err)
 		os.Exit(1)
 	}
 }
@@ -73,6 +77,7 @@ func run() error {
 	log.Infof("RAM tenantID: %s", tenantID)
 
 	addr := cfg.RemoteAccessManager.ServiceURL
+	// Legacy semantics: default (unset or "false") uses insecure gRPC; set GRPC_INSECURE=true to enable TLS (see branch below).
 	useInsecure := envOrDefault("GRPC_INSECURE", "false") == "false"
 
 	// SIGINT/SIGTERM → cancel
@@ -97,7 +102,7 @@ func run() error {
 	var creds credentials.TransportCredentials
 	if useInsecure {
 		creds = insecure.NewCredentials()
-		log.Warn("⚠️ using insecure gRPC transport (dev mode)")
+		log.Warn("using insecure gRPC transport (dev mode)")
 	} else {
 		c, err := buildTLSCreds(
 			envOrDefault("GRPC_CA_CERT", "ca.pem"),
@@ -115,7 +120,7 @@ func run() error {
 	}
 	defer func() {
 		if err := closeConn(); err != nil {
-			log.Warnf("⚠️ close gRPC: %v", err)
+			log.Warnf("close gRPC: %v", err)
 		}
 	}()
 
@@ -135,19 +140,23 @@ func run() error {
 	rpcBo.MaxInterval = 30 * time.Second
 	rpcBo.MaxElapsedTime = 0
 
-	var closeTunnel func() error
-	defer func() {
-		if closeTunnel != nil {
-			if err := closeTunnel(); err != nil {
-				log.Warnf("⚠️ close tunnel: %v", err)
-			}
-		}
-	}()
+	tunnelReg := tunnelmgr.New(log.Logger)
+	defer tunnelReg.CloseBestEffort(tunnelmgr.CloseReasonShutdown)
+
+	maxOutage := maxRAMOutageFromEnv()
+	var lastRPCSuccess time.Time
 
 pollLoop:
 	for {
 		if ctx.Err() != nil {
 			break pollLoop
+		}
+
+		// Tmax: no successful RAM contact for too long while tunnel is up.
+		if !lastRPCSuccess.IsZero() && time.Since(lastRPCSuccess) > maxOutage {
+			if tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonRPCStale) {
+				log.Warnf("no successful RAM poll for %v — closed tunnel (Tmax)", maxOutage)
+			}
 		}
 
 		// Refresh auth context from token file for each poll, so rotated JWTs are picked up.
@@ -159,6 +168,11 @@ pollLoop:
 			if ctx.Err() != nil {
 				break pollLoop
 			}
+			if !lastRPCSuccess.IsZero() && time.Since(lastRPCSuccess) > maxOutage {
+				if tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonRPCStale) {
+					log.Warnf("RAM poll failed and outage exceeded Tmax — closed tunnel")
+				}
+			}
 			log.Warnf("RAM poll failed: %v", err)
 			if sleepOrDone(ctx, rpcBo.NextBackOff()) != nil {
 				break pollLoop
@@ -166,74 +180,130 @@ pollLoop:
 			continue
 		}
 		rpcBo.Reset()
+		lastRPCSuccess = time.Now()
 
 		log.Infof("RAM poll: status=%s", resp.GetStatus().String())
+		applyRAMResponse(ctx, tunnelReg, conn, proxyCfg, cfg.Proxy.DefaultEndpoint, resp)
 
-		switch resp.GetStatus() {
-		case servicev1.ConfigStatus_CONFIG_STATUS_ACTIVE:
-			spec := resp.GetSpec()
-			if spec == nil {
-				log.Error("RAM returned ACTIVE with nil spec")
-				if sleepOrDone(ctx, configPollInterval) != nil {
-					break pollLoop
-				}
-				continue
-			}
-			log.Infof("remote access active: rac uuid=%s", spec.GetUuid())
-			_, closeFn, err := conn.Start(ctx, spec, proxyCfg)
-			if err != nil {
-				if isCtxErr(err) || ctx.Err() != nil {
-					break pollLoop
-				}
-				log.Warnf("proxy start failed: %v", err)
-				if sleepOrDone(ctx, configPollInterval) != nil {
-					break pollLoop
-				}
-				continue
-			}
-			closeTunnel = closeFn
-			<-ctx.Done()
+		if sleepOrDone(ctx, configPollInterval) != nil {
 			break pollLoop
-
-		case servicev1.ConfigStatus_CONFIG_STATUS_NONE:
-			log.Debugf("RAM: no remote access configuration for this host yet (NONE)")
-			if sleepOrDone(ctx, configPollInterval) != nil {
-				break pollLoop
-			}
-
-		case servicev1.ConfigStatus_CONFIG_STATUS_PENDING:
-			log.Debugf("RAM: remote access configuration pending")
-			if sleepOrDone(ctx, configPollInterval) != nil {
-				break pollLoop
-			}
-
-		case servicev1.ConfigStatus_CONFIG_STATUS_DISABLED:
-			log.Infof("RAM: remote access disabled for this host")
-			if sleepOrDone(ctx, configPollInterval) != nil {
-				break pollLoop
-			}
-
-		case servicev1.ConfigStatus_CONFIG_STATUS_ERROR:
-			code := ""
-			if ce := resp.GetError(); ce != nil {
-				code = ce.GetCode()
-			}
-			log.Warnf("RAM: configuration error (code=%q)", code)
-			if sleepOrDone(ctx, configPollInterval) != nil {
-				break pollLoop
-			}
-
-		default:
-			log.Warnf("RAM: unexpected status %v", resp.GetStatus())
-			if sleepOrDone(ctx, configPollInterval) != nil {
-				break pollLoop
-			}
 		}
 	}
 
-	log.Info("👋 client shutting down gracefully")
+	log.Info("client shutting down gracefully")
 	wg.Wait()
 	return nil
+}
+
+// applyRAMResponse maps RAM status/spec to tunnel actions (see docs/agent-ram-poll-state-machine.md).
+// Call only from the poll goroutine together with tryStartTunnel — §9.1 single owner: conn.Start may block;
+// until it returns, no new poll runs, so the next iteration sees fresh RAM and can CloseIfOpen if policy changed.
+func applyRAMResponse(
+	ctx context.Context,
+	tunnelReg *tunnelmgr.Registry,
+	conn *proxy.Connector,
+	proxyCfg *proxy.StartConfig,
+	defaultEndpoint string,
+	resp *servicev1.GetResourceAccessConfigResponse,
+) {
+	now := time.Now().UTC()
+	spec := resp.GetSpec()
+
+	// Local expiry overrides ACTIVE from RAM (agent-ram-poll-state-machine §2).
+	if spec != nil && spec.GetExpirationTimestamp() != 0 && int64(spec.GetExpirationTimestamp()) <= now.Unix() {
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonExpiredLocal)
+		return
+	}
+
+	switch resp.GetStatus() {
+	case servicev1.ConfigStatus_CONFIG_STATUS_ACTIVE:
+		if spec == nil {
+			log.Errorf("contract violation: ACTIVE with nil spec — closing tunnel if any")
+			tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonContractActiveNil)
+			return
+		}
+		fp, err := proxy.SpecChiselFingerprint(spec, defaultEndpoint)
+		if err != nil {
+			log.Warnf("Chisel fingerprint: %v — closing tunnel", err)
+			tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonFingerprintInvalid)
+			return
+		}
+		if !tunnelReg.HasTunnel() {
+			tryStartTunnel(ctx, tunnelReg, conn, proxyCfg, spec, fp)
+			return
+		}
+		if fp != tunnelReg.LastFingerprint() {
+			tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonFingerprintChanged)
+			tryStartTunnel(ctx, tunnelReg, conn, proxyCfg, spec, fp)
+		}
+
+	case servicev1.ConfigStatus_CONFIG_STATUS_NONE:
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonNone)
+		log.Debugf("RAM: no remote access configuration for this host (NONE)")
+
+	case servicev1.ConfigStatus_CONFIG_STATUS_PENDING:
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonPending)
+		log.Debugf("RAM: remote access configuration pending")
+
+	case servicev1.ConfigStatus_CONFIG_STATUS_DISABLED:
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonDisabled)
+		log.Infof("RAM: remote access disabled for this host")
+
+	case servicev1.ConfigStatus_CONFIG_STATUS_ERROR:
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonError)
+		code := ""
+		if ce := resp.GetError(); ce != nil {
+			code = ce.GetCode()
+		}
+		log.Warnf("RAM: configuration error (code=%q)", code)
+
+	case servicev1.ConfigStatus_CONFIG_STATUS_UNSPECIFIED:
+		log.Warnf("contract: CONFIG_STATUS_UNSPECIFIED — possible version skew")
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonContractUnspecified)
+
+	default:
+		log.Warnf("RAM: unexpected status %v", resp.GetStatus())
+		tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonUnexpectedStatus)
+	}
+}
+
+func tryStartTunnel(
+	ctx context.Context,
+	tunnelReg *tunnelmgr.Registry,
+	conn *proxy.Connector,
+	proxyCfg *proxy.StartConfig,
+	spec *servicev1.AgentRemoteAccessSpec,
+	fingerprint string,
+) {
+	onExit := func() {
+		if tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonTunnelDead) {
+			log.Warnf("chisel client exited — tunnel cleared (%s); will retry Start on next ACTIVE poll if fingerprint unchanged", tunnelmgr.CloseReasonTunnelDead)
+		}
+	}
+	_, closeFn, runWatch, err := conn.Start(ctx, spec, proxyCfg, onExit)
+	if err != nil {
+		if isCtxErr(err) || ctx.Err() != nil {
+			return
+		}
+		log.Warnf("proxy start failed: %v", err)
+		return
+	}
+	tunnelReg.SetTunnel(closeFn, fingerprint)
+	runWatch()
+	log.Infof("remote access tunnel up rac uuid=%s", spec.GetUuid())
+}
+
+func maxRAMOutageFromEnv() time.Duration {
+	s := strings.TrimSpace(os.Getenv("REMOTE_ACCESS_RAM_MAX_OUTAGE"))
+	if s == "" {
+		return defaultMaxRAMOutage
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		log.Warnf("invalid REMOTE_ACCESS_RAM_MAX_OUTAGE %q — using %v", s, defaultMaxRAMOutage)
+		return defaultMaxRAMOutage
+	}
+	return d
 }
 
 // --- helpers ---

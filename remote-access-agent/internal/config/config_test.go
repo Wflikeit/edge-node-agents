@@ -112,6 +112,8 @@ func Test_New_Defaults(t *testing.T) {
 
 	// Check default metrics interval
 	assert.Equal(t, 10*time.Second, cfg.MetricsInterval)
+
+	assert.Equal(t, 30*time.Second, cfg.RemoteAccessManager.PollInterval)
 }
 
 // Test_New_CustomDefaults tests that custom values override defaults
@@ -125,7 +127,8 @@ func Test_New_CustomDefaults(t *testing.T) {
 		LogLevel: testLogLevel,
 		GUID:     testGUID,
 		RemoteAccessManager: config.RemoteAccessManagerConfig{
-			ServiceURL: testServiceURL,
+			ServiceURL:   testServiceURL,
+			PollInterval: 45 * time.Second,
 		},
 		Proxy: config.ProxyConfig{
 			DefaultEndpoint: testProxyEndpoint,
@@ -155,6 +158,7 @@ func Test_New_CustomDefaults(t *testing.T) {
 	assert.Equal(t, 30*time.Second, cfg.Proxy.Keepalive)
 	assert.Equal(t, 10, cfg.Proxy.MaxRetry)
 	assert.Equal(t, 20*time.Second, cfg.MetricsInterval)
+	assert.Equal(t, 45*time.Second, cfg.RemoteAccessManager.PollInterval)
 }
 
 // Test_New_EmptyPath tests that empty config path returns error
@@ -229,6 +233,33 @@ func Test_New_MissingProxyDefaultEndpoint(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "Proxy.DefaultEndpoint is required")
+}
+
+// Test_New_PollIntervalTooShort tests validation of manager poll interval
+func Test_New_PollIntervalTooShort(t *testing.T) {
+	f, err := os.CreateTemp("", "test_config")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	custom := config.Config{
+		Version:  "v0.0.1",
+		LogLevel: testLogLevel,
+		GUID:     testGUID,
+		RemoteAccessManager: config.RemoteAccessManagerConfig{
+			ServiceURL:   testServiceURL,
+			PollInterval: 500 * time.Millisecond,
+		},
+		Proxy: config.ProxyConfig{DefaultEndpoint: testProxyEndpoint},
+		JWT:   config.JWTConfig{AccessTokenPath: testAccessTokenPath},
+	}
+	data, err := yaml.Marshal(custom)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(f.Name(), data, 0o600))
+
+	cfg, err := config.New(f.Name())
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "pollInterval")
 }
 
 // Test_New_MissingAccessTokenPath tests that missing access token path returns error

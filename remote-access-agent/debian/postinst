@@ -30,6 +30,7 @@ logLevel: 'info'
 GUID: '00000000-0000-0000-0000-000000000000'
 remoteAccessManager:
   serviceURL: 'infra.test.edgeorch.intel.com:443'
+  pollInterval: 30s
 metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
 metricsInterval: 10s
 statusEndpoint: 'unix:///run/node-agent/node-agent.sock'

@@ -16,6 +16,8 @@ GUID: '00000000-0000-0000-0000-000000000000'
 # gRPC service address for Remote Access Manager (through Traefik)
 remoteAccessManager:
   serviceURL: 'infra.test.edgeorch.intel.com:443'
+  # How often to poll RAM for status/spec changes (min 1s; default 30s if omitted)
+  pollInterval: 30s
 
 metricsEndpoint: 'unix:///run/platform-observability-agent/platform-observability-agent.sock'
 metricsInterval: 10s

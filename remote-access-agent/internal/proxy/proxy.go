@@ -18,6 +18,7 @@ import (
 
 type ChiselClient interface {
 	Start(ctx context.Context) error
+	Wait() error
 	Run() error
 	Close() error
 }
@@ -42,14 +43,16 @@ type StartConfig struct {
 }
 
 // Start establishes a connection to the Chisel server on Remote Access Proxy.
-// The endpoint URL should be in format: wss://host:port (for WebSocket Secure via Traefik)
-// or ws://host:port (for plain WebSocket). If spec doesn't provide endpoint,
-// defaultEndpoint from config is used as fallback.
+// Endpoint from spec or defaultEndpoint may use wss:// / ws:// / https:// / http:// / bare host;
+// values are normalized to https:// or http:// before chisel.Config.Server (see ensureEndpointScheme).
 // According to Chisel documentation: https://github.com/jpillora/chisel
-// - Chisel uses WebSocket transport (ws:// or wss://)
-// - Through Traefik reverse proxy, connections are secured with TLS (wss://)
+// - Client Config.Server must use http:// or https:// (library maps to ws/wss and TLS)
 // - Reverse tunneling is supported with "R:" prefix in remotes
-func (c *Connector) Start(ctx context.Context, spec *remaccessmgr.AgentRemoteAccessSpec, cfg *StartConfig) (remoteAddr string, closeFn func() error, err error) {
+//
+// onClientExit is invoked after the Chisel client errgroup finishes (same fingerprint, dead tunnel — agent-ram-poll-state-machine §6.1). May be nil (tests); production should pass a callback that clears tunnel state so the next ACTIVE poll can Start again.
+//
+// Call the returned runWatch exactly once after registering closeFn (e.g. tunnelmgr.SetTunnel) so a fast-failing client cannot clear state before the tunnel is tracked (§9.1).
+func (c *Connector) Start(ctx context.Context, spec *remaccessmgr.AgentRemoteAccessSpec, cfg *StartConfig, onClientExit func()) (remoteAddr string, closeFn func() error, runWatch func(), err error) {
 	remoteDef := fmt.Sprintf(
 		"R:%d:%s:%d", // reverse-bind:remotePort:targetHost:targetPort (Chisel reverse tunnel)
 		spec.GetReverseBindPort(),
@@ -63,11 +66,11 @@ func (c *Connector) Start(ctx context.Context, spec *remaccessmgr.AgentRemoteAcc
 		endpoint = cfg.DefaultEndpoint
 	}
 	if endpoint == "" {
-		return "", nil, fmt.Errorf("remote access proxy endpoint is required (from spec or config)")
+		return "", nil, nil, fmt.Errorf("remote access proxy endpoint is required (from spec or config)")
 	}
 
-	// Ensure endpoint has a scheme (wss:// or ws://)
-	// Chisel supports http/https/ws/wss, but through Traefik we use wss://
+	// jpillora/chisel NewClient prepends "http://" unless Server already starts with "http";
+	// values like "wss://host" become invalid combined URLs. Use https:// or http:// only.
 	endpoint = ensureEndpointScheme(endpoint)
 
 	keepAlive := 25 * time.Second
@@ -91,42 +94,53 @@ func (c *Connector) Start(ctx context.Context, spec *remaccessmgr.AgentRemoteAcc
 	}
 	cli, err := c.newClient(chiselCfg)
 	if err != nil {
-		return "", nil, fmt.Errorf("chisel new client: %w", err)
+		return "", nil, nil, fmt.Errorf("chisel new client: %w", err)
 	}
 
 	if err := cli.Start(ctx); err != nil {
 		_ = cli.Close()
-		return "", nil, fmt.Errorf("chisel start: %w", err)
+		return "", nil, nil, fmt.Errorf("chisel start: %w", err)
+	}
+
+	// jpillora/chisel Start returns immediately; connection runs in an errgroup. Wait() unblocks
+	// when the client stops (disconnect, Close, or unrecoverable error). defer Close ensures
+	// cleanup if the owner never registers this client or Wait ends without going through closeFn.
+	runWatch = func() {
+		go func() {
+			defer func() { _ = cli.Close() }()
+			_ = cli.Wait()
+			if onClientExit != nil {
+				onClientExit()
+			}
+		}()
 	}
 
 	u, err := url.Parse(chiselCfg.Server)
 	if err != nil {
 		_ = cli.Close()
-		return "", nil, fmt.Errorf("bad proxy endpoint %q: %w", chiselCfg.Server, err)
+		return "", nil, nil, fmt.Errorf("bad proxy endpoint %q: %w", chiselCfg.Server, err)
 	}
 	// Return address for the reverse tunnel endpoint
 	// ReverseBindPort is where the reverse tunnel will be accessible on the proxy side
 	remoteAddr = net.JoinHostPort(u.Hostname(), strconv.Itoa(int(spec.GetReverseBindPort())))
-	return remoteAddr, cli.Close, nil
+	return remoteAddr, cli.Close, runWatch, nil
 }
 
-// ensureEndpointScheme ensures the endpoint URL has a proper scheme.
-// If no scheme is provided, defaults to wss:// (WebSocket Secure) which is used through Traefik.
+// ensureEndpointScheme returns a URL suitable for chisel.Config.Server (https:// or http://).
 func ensureEndpointScheme(endpoint string) string {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
 		return endpoint
 	}
 
-	// Check if already has a scheme
-	if strings.HasPrefix(endpoint, "ws://") ||
-		strings.HasPrefix(endpoint, "wss://") ||
-		strings.HasPrefix(endpoint, "http://") ||
-		strings.HasPrefix(endpoint, "https://") {
+	switch {
+	case strings.HasPrefix(endpoint, "wss://"):
+		return "https://" + strings.TrimPrefix(endpoint, "wss://")
+	case strings.HasPrefix(endpoint, "ws://"):
+		return "http://" + strings.TrimPrefix(endpoint, "ws://")
+	case strings.HasPrefix(endpoint, "https://"), strings.HasPrefix(endpoint, "http://"):
 		return endpoint
+	default:
+		return "https://" + endpoint
 	}
-
-	// Default to wss:// for secure connections through Traefik
-	// Chisel uses WebSocket, and through Traefik it's secured with TLS (WSS)
-	return "wss://" + endpoint
 }

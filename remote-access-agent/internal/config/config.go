@@ -14,7 +14,8 @@ import (
 
 // RemoteAccessManagerConfig contains Remote Access Manager service configuration
 type RemoteAccessManagerConfig struct {
-	ServiceURL string `yaml:"serviceURL"` // gRPC service address
+	ServiceURL    string        `yaml:"serviceURL"`              // gRPC service address
+	PollInterval  time.Duration `yaml:"pollInterval,omitempty"`  // delay between GetRemoteAccessConfig polls
 }
 
 // ProxyConfig contains proxy configuration
@@ -86,6 +87,10 @@ func (cfg *Config) setDefaults() {
 	if cfg.MetricsInterval == 0 {
 		cfg.MetricsInterval = 10 * time.Second
 	}
+
+	if cfg.RemoteAccessManager.PollInterval == 0 {
+		cfg.RemoteAccessManager.PollInterval = 30 * time.Second
+	}
 }
 
 // validate checks if required configuration values are set
@@ -104,6 +109,10 @@ func (cfg *Config) validate() error {
 
 	if cfg.JWT.AccessTokenPath == "" {
 		return fmt.Errorf("jwt.accessTokenPath is required")
+	}
+
+	if cfg.RemoteAccessManager.PollInterval < time.Second {
+		return fmt.Errorf("remoteAccessManager.pollInterval must be at least 1s")
 	}
 
 	return nil
