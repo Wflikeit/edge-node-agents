@@ -5,8 +5,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -32,7 +30,6 @@ import (
 	grpcclient "github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/rmtaccessconfmgr_client"
 	"github.com/open-edge-platform/edge-node-agents/remote-access-agent/internal/tunnelmgr"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const AGENT_NAME = "remote-access-agent"
@@ -70,8 +67,6 @@ func run() error {
 	log.Infof("Starting %s - %s", info.Component, info.Version)
 
 	addr := cfg.RemoteAccessManager.ServiceURL
-	// Legacy semantics: default (unset or "false") uses insecure gRPC; set GRPC_INSECURE=true to enable TLS (see branch below).
-	useInsecure := envOrDefault("GRPC_INSECURE", "false") == "false"
 
 	// SIGINT/SIGTERM → cancel
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -91,21 +86,11 @@ func run() error {
 		}()
 	}
 
-	// TLS / insecure creds
-	var creds credentials.TransportCredentials
-	if useInsecure {
-		creds = insecure.NewCredentials()
-		log.Warn("using insecure gRPC transport (dev mode)")
-	} else {
-		c, err := buildTLSCreds(
-			envOrDefault("GRPC_CA_CERT", "ca.pem"),
-			envOrDefault("GRPC_TLS_SERVER_NAME", ""),
-		)
-		if err != nil {
-			return fmt.Errorf("tls setup: %w", err)
-		}
-		creds = c
+	tlsCfg, err := utils.GetAuthConfig(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("tls setup: %w", err)
 	}
+	creds := credentials.NewTLS(tlsCfg)
 
 	raCli, closeConn, err := grpcclient.New(ctx, addr, creds)
 	if err != nil {
@@ -297,30 +282,6 @@ func maxRAMOutageFromEnv() time.Duration {
 		return defaultMaxRAMOutage
 	}
 	return d
-}
-
-// --- helpers ---
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); strings.TrimSpace(v) != "" {
-		return v
-	}
-	return def
-}
-
-func buildTLSCreds(caPath, serverName string) (credentials.TransportCredentials, error) {
-	pem, err := os.ReadFile(caPath)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("bad CA pem")
-	}
-	tlsCfg := &tls.Config{RootCAs: pool}
-	if serverName != "" {
-		tlsCfg.ServerName = serverName
-	}
-	return credentials.NewTLS(tlsCfg), nil
 }
 
 func isCtxErr(err error) bool {
