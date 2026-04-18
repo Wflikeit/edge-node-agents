@@ -46,19 +46,19 @@ rabuild:
 	go build -buildmode=pie -trimpath -mod=$(GO_MOD) -gcflags="all=-spectre=all -l" -asmflags="all=-spectre=all" -ldflags="all=-s -w -extldflags=-static \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.version=$(VERSION) \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.commit=$(COMMIT)" \
-	-o $(BUILD_DIR)/$(NAME) cmd/remote-access-agent.go
+	-o $(BUILD_DIR)/$(NAME) ./cmd/client
 
 rabuild_with_race:
 	CGO_ENABLED=1 go build -race -ldflags=" \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.version=$(VERSION) \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.commit=$(COMMIT)" \
-	-o $(BUILD_DIR)/$(NAME)_race cmd/remote-access-agent.go
+	-o $(BUILD_DIR)/$(NAME)_race ./cmd/client
 
 rabuild_with_cover:
 	CGO_ENABLED=0 go build -cover -covermode count -ldflags=" \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.version=$(VERSION) \
 	-X github.com/open-edge-platform/edge-node-agents/remote-access-agent/info.commit=$(COMMIT)" \
-	-o $(BUILD_DIR)/$(NAME)_cover cmd/remote-access-agent.go
+	-o $(BUILD_DIR)/$(NAME)_cover ./cmd/client
 
 build: rabuild
 
