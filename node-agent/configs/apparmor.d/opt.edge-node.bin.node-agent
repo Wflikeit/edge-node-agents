@@ -36,6 +36,7 @@ include <tunables/global>
   owner /etc/intel_edge_node/tokens/platform-manageability-agent/access_token rw,
   owner /etc/intel_edge_node/tokens/platform-update-agent/access_token rw,
   owner /etc/intel_edge_node/tokens/prometheus/access_token rw,
+  owner /etc/intel_edge_node/tokens/remote-access-agent/access_token rw,
   owner /etc/intel_edge_node/tokens/release-service/access_token rw,
   owner /etc/edge-node/node/confs/node-agent.yaml r,
   owner /proc/*/cgroup r,
