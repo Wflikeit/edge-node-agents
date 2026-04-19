@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	remaccessmgr "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 	chclient "github.com/jpillora/chisel/client"
+	remaccessmgr "github.com/open-edge-platform/infra-managers/remote-access/pkg/api/rmtaccessmgr/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,10 +48,8 @@ func TestConnector_Start_runWatchAfterRegister_invokesOnExit(t *testing.T) {
 		RemoteAccessProxyEndpoint: "wss://example.test:443",
 		SessionToken:              "u:p",
 		ReverseBindPort:           1,
-		TargetHost:                "127.0.0.1",
-		TargetPort:                22,
 	}
-	_, closeFn, runWatch, err := conn.Start(context.Background(), spec, &StartConfig{}, func() {
+	_, closeFn, runWatch, err := conn.Start(context.Background(), spec, &StartConfig{TargetHost: "127.0.0.1", TargetPort: 22}, func() {
 		exitCount.Add(1)
 	})
 	require.NoError(t, err)
@@ -90,10 +88,8 @@ func TestConnector_Start_propagatesStartError(t *testing.T) {
 		RemoteAccessProxyEndpoint: "wss://example.test:443",
 		SessionToken:              "u:p",
 		ReverseBindPort:           1,
-		TargetHost:                "127.0.0.1",
-		TargetPort:                22,
 	}
-	_, _, runWatch, err := conn.Start(context.Background(), spec, &StartConfig{}, nil)
+	_, _, runWatch, err := conn.Start(context.Background(), spec, &StartConfig{TargetHost: "127.0.0.1", TargetPort: 22}, nil)
 	require.Error(t, err)
 	require.Nil(t, runWatch)
 }

@@ -111,6 +111,8 @@ func run() error {
 		DefaultEndpoint: cfg.Proxy.DefaultEndpoint,
 		KeepAlive:       cfg.Proxy.Keepalive,
 		MaxRetryCount:   cfg.Proxy.MaxRetry,
+		TargetHost:      cfg.Proxy.TargetHost,
+		TargetPort:      cfg.Proxy.TargetPort,
 	}
 
 	rpcBo := cbackoff.NewExponentialBackOff()
@@ -161,7 +163,7 @@ pollLoop:
 		lastRPCSuccess = time.Now()
 
 		log.Infof("RAM poll: status=%s", resp.GetStatus().String())
-		applyRAMResponse(ctx, tunnelReg, conn, proxyCfg, cfg.Proxy.DefaultEndpoint, resp)
+		applyRAMResponse(ctx, tunnelReg, conn, proxyCfg, cfg.Proxy.DefaultEndpoint, cfg.Proxy.TargetHost, cfg.Proxy.TargetPort, resp)
 
 		if sleepOrDone(ctx, configPollInterval) != nil {
 			break pollLoop
@@ -182,6 +184,8 @@ func applyRAMResponse(
 	conn *proxy.Connector,
 	proxyCfg *proxy.StartConfig,
 	defaultEndpoint string,
+	localTargetHost string,
+	localTargetPort uint32,
 	resp *servicev1.GetResourceAccessConfigResponse,
 ) {
 	now := time.Now().UTC()
@@ -200,7 +204,7 @@ func applyRAMResponse(
 			tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonContractActiveNil)
 			return
 		}
-		fp, err := proxy.SpecChiselFingerprint(spec, defaultEndpoint)
+		fp, err := proxy.SpecChiselFingerprint(spec, defaultEndpoint, localTargetHost, localTargetPort)
 		if err != nil {
 			log.Warnf("Chisel fingerprint: %v — closing tunnel", err)
 			tunnelReg.CloseIfOpen(tunnelmgr.CloseReasonFingerprintInvalid)

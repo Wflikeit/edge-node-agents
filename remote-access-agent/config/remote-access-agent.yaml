@@ -33,3 +33,6 @@ proxy:
   # Default endpoint for Remote Access Proxy (WebSocket Secure through Traefik)
   # Used as fallback if spec from gRPC doesn't provide endpoint
   defaultEndpoint: 'wss://remote-access-proxy-ws.domain:443'
+  # Edge-local SSH (or other) target for the reverse tunnel; not from RAM/inventory
+  targetHost: '127.0.0.1'
+  targetPort: 22

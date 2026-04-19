@@ -109,6 +109,8 @@ func Test_New_Defaults(t *testing.T) {
 	// Check default proxy values
 	assert.Equal(t, 25*time.Second, cfg.Proxy.Keepalive)
 	assert.Equal(t, -1, cfg.Proxy.MaxRetry) // infinite retry
+	assert.Equal(t, "127.0.0.1", cfg.Proxy.TargetHost)
+	assert.Equal(t, uint32(22), cfg.Proxy.TargetPort)
 
 	// Check default metrics interval
 	assert.Equal(t, 10*time.Second, cfg.MetricsInterval)

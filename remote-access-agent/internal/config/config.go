@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/open-edge-platform/edge-node-agents/common/pkg/utils"
@@ -14,8 +15,8 @@ import (
 
 // RemoteAccessManagerConfig contains Remote Access Manager service configuration
 type RemoteAccessManagerConfig struct {
-	ServiceURL    string        `yaml:"serviceURL"`              // gRPC service address
-	PollInterval  time.Duration `yaml:"pollInterval,omitempty"`  // delay between GetRemoteAccessConfig polls
+	ServiceURL   string        `yaml:"serviceURL"`             // gRPC service address
+	PollInterval time.Duration `yaml:"pollInterval,omitempty"` // delay between GetRemoteAccessConfig polls
 }
 
 // ProxyConfig contains proxy configuration
@@ -23,6 +24,10 @@ type ProxyConfig struct {
 	Keepalive       time.Duration `yaml:"keepalive"`
 	MaxRetry        int           `yaml:"max_retry"`
 	DefaultEndpoint string        `yaml:"defaultEndpoint,omitempty"`
+	// TargetHost is the edge-local address Chisel forwards tunneled traffic to (e.g. loopback SSH).
+	TargetHost string `yaml:"targetHost,omitempty"`
+	// TargetPort is the edge-local port (e.g. 22 for SSH). Not sourced from RAM/inventory.
+	TargetPort uint32 `yaml:"targetPort,omitempty"`
 }
 
 // JWTConfig contains JWT token configuration
@@ -91,6 +96,13 @@ func (cfg *Config) setDefaults() {
 	if cfg.RemoteAccessManager.PollInterval == 0 {
 		cfg.RemoteAccessManager.PollInterval = 30 * time.Second
 	}
+
+	if strings.TrimSpace(cfg.Proxy.TargetHost) == "" {
+		cfg.Proxy.TargetHost = "127.0.0.1"
+	}
+	if cfg.Proxy.TargetPort == 0 {
+		cfg.Proxy.TargetPort = 22
+	}
 }
 
 // validate checks if required configuration values are set
@@ -113,6 +125,10 @@ func (cfg *Config) validate() error {
 
 	if cfg.RemoteAccessManager.PollInterval < time.Second {
 		return fmt.Errorf("remoteAccessManager.pollInterval must be at least 1s")
+	}
+
+	if cfg.Proxy.TargetPort < 1 || cfg.Proxy.TargetPort > 65535 {
+		return fmt.Errorf("proxy.targetPort must be between 1 and 65535")
 	}
 
 	return nil

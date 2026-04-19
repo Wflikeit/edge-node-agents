@@ -35,11 +35,13 @@ type Connector struct {
 
 func New(f Factory) *Connector { return &Connector{newClient: f} }
 
-// StartConfig holds proxy configuration for fallback endpoint
+// StartConfig holds proxy configuration for fallback endpoint and edge-local Chisel target
 type StartConfig struct {
 	DefaultEndpoint string
 	KeepAlive       time.Duration
 	MaxRetryCount   int
+	TargetHost      string
+	TargetPort      uint32
 }
 
 // Start establishes a connection to the Chisel server on Remote Access Proxy.
@@ -53,11 +55,21 @@ type StartConfig struct {
 //
 // Call the returned runWatch exactly once after registering closeFn (e.g. tunnelmgr.SetTunnel) so a fast-failing client cannot clear state before the tunnel is tracked (§9.1).
 func (c *Connector) Start(ctx context.Context, spec *remaccessmgr.AgentRemoteAccessSpec, cfg *StartConfig, onClientExit func()) (remoteAddr string, closeFn func() error, runWatch func(), err error) {
+	targetHost := ""
+	targetPort := uint32(0)
+	if cfg != nil {
+		targetHost = strings.TrimSpace(cfg.TargetHost)
+		targetPort = cfg.TargetPort
+	}
+	if targetHost == "" || targetPort == 0 {
+		return "", nil, nil, fmt.Errorf("proxy target host and port are required (from agent config)")
+	}
+
 	remoteDef := fmt.Sprintf(
 		"R:%d:%s:%d", // reverse-bind:remotePort:targetHost:targetPort (Chisel reverse tunnel)
 		spec.GetReverseBindPort(),
-		spec.GetTargetHost(),
-		spec.GetTargetPort(),
+		targetHost,
+		targetPort,
 	)
 
 	// Get endpoint from spec, fallback to config if empty
